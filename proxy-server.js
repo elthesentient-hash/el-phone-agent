@@ -9,7 +9,7 @@ const app = express();
 
 app.use(express.json({ limit: '50mb' }));
 
-const ELEVENLABS_API_KEY = 'sk_b50242f8061cb19ccbc4f8c2e4a2a6524933d69dd8bc91d1';
+const ELEVENLABS_API_KEY = 'sk_e8710430f9222d0b0053af60c9aba3c29a6de9754d05fe44';
 const ELEVENLABS_VOICE_ID = 'iP95p4xoKVk53GoZ742B';
 
 // Health check
