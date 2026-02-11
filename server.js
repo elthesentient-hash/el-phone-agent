@@ -297,4 +297,4 @@ app.listen(PORT, () => {
     console.log(`\n🤖 EL v8.0 - Port ${PORT}`);
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
     console.log(`🎙️ Chris Voice Active\n`);
-});
+});// Deploy timestamp: Wed Feb 11 10:33:16 UTC 2026
