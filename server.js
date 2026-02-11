@@ -169,26 +169,46 @@ app.get('/play/:key', (req, res) => {
 async function processCommand(speech, callSid) {
     const lower = speech.toLowerCase();
     
-    // SMS Command: "text 5149636528 hello there"
-    if (lower.includes('text') || lower.includes('message') || lower.includes('send to')) {
-        // Try to extract number
-        const phoneMatch = speech.match(/(\+?\d{10,15})/);
+    // SMS Command: "text 5149636528 hello there" or "send text to 5149636528"
+    if (lower.includes('text') || lower.includes('message') || lower.includes('send to') || lower.includes('sms')) {
+        // Try to extract number (with or without +1, with dashes)
+        const phoneMatch = speech.match(/(\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/);
         
         if (phoneMatch) {
-            const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : `+1${phoneMatch[1]}`;
+            // Clean up the number
+            let phone = phoneMatch[1].replace(/\D/g, ''); // Remove non-digits
+            if (!phone.startsWith('1')) phone = '1' + phone; // Add country code
+            phone = '+' + phone;
             
-            // Extract message (everything after the number)
-            const afterNumber = speech.substring(speech.indexOf(phoneMatch[1]) + phoneMatch[1].length);
-            const message = afterNumber.replace(/^[\s:,-]+/, '').trim() || 'Message from EL';
+            // Extract message - everything after "text/message/say" keywords
+            let message = '';
+            const messageKeywords = ['text', 'message', 'saying', 'say', 'that says'];
+            for (const kw of messageKeywords) {
+                const idx = lower.indexOf(kw);
+                if (idx !== -1) {
+                    const after = speech.substring(idx + kw.length);
+                    // Skip the number if it's right after
+                    const cleaned = after.replace(phoneMatch[1], '').trim();
+                    if (cleaned && cleaned.length > 2) {
+                        message = cleaned;
+                        break;
+                    }
+                }
+            }
             
-            console.log(`📤 SMS request: ${phone} - "${message}"`);
+            // If no message found, ask what to text
+            if (!message || message.length < 3) {
+                return "Got it, I'll text ${phoneMatch[1]}. What should I say?";
+            }
+            
+            console.log(`📤 SMS: ${phone} - "${message}"`);
             
             const result = await sendTextMessage(phone, message);
             
             if (result.success) {
-                return `Text sent to ${phone}!`;
+                return `Text sent to ${phoneMatch[1]}! Message: "${message}"`;
             } else {
-                return `Couldn't send text: ${result.error}`;
+                return `Couldn't send text: ${result.error}. Check Twilio settings.`;
             }
         }
     }
