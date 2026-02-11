@@ -1,6 +1,6 @@
 /**
- * EL Phone Agent - Working Chris Voice
- * Pre-generated greetings + ElevenLabs for responses
+ * EL Phone Agent - Premium Twilio Voice (No ElevenLabs needed)
+ * Uses Amazon Polly Neural voices - natural and reliable
  */
 
 const express = require('express');
@@ -14,98 +14,12 @@ app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 3000;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'iP95p4xoKVk53GoZ742B';
 const NEXOS_API_KEY = process.env.NEXOS_API_KEY;
 
-console.log('🚀 EL Phone Agent Starting...');
+console.log('🚀 EL Phone Agent - Premium Voice');
 console.log('📞 Phone:', TWILIO_PHONE_NUMBER);
-console.log('🎙️ Voice ID:', ELEVENLABS_VOICE_ID);
-console.log('🔑 ElevenLabs configured:', ELEVENLABS_API_KEY ? 'YES' : 'NO');
 
-// Store audio in memory
-const audioStore = new Map();
-
-// ============================================
-// PRE-GENERATE GREETING ON STARTUP
-// ============================================
-
-async function preGenerateAudio() {
-    const greetings = [
-        "Hey there! Good morning. This is EL. What's going on?",
-        "Hey there! Good afternoon. This is EL. What's going on?",
-        "Hey there! Good evening. This is EL. What's going on?",
-        "Could you say that again?",
-        "Got it. Let me think...",
-        "I'm not sure I caught that.",
-        "Alright, take care! Talk soon."
-    ];
-    
-    for (const text of greetings) {
-        try {
-            const response = await axios.post(
-                `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-                { text, model_id: 'eleven_v3', voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
-                { headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY }, responseType: 'arraybuffer', timeout: 20000 }
-            );
-            
-            const base64 = Buffer.from(response.data).toString('base64');
-            audioStore.set(text, base64);
-            console.log(`✅ Pre-generated: "${text.substring(0, 40)}..."`);
-        } catch (e) {
-            console.error(`❌ Failed to generate: "${text}"`, e.message);
-        }
-    }
-}
-
-// Generate on startup
-preGenerateAudio();
-
-// ============================================
-// SERVE AUDIO
-// ============================================
-
-app.get('/audio/:text', async (req, res) => {
-    const text = decodeURIComponent(req.params.text);
-    
-    // Check cache first
-    if (audioStore.has(text)) {
-        const buffer = Buffer.from(audioStore.get(text), 'base64');
-        res.set('Content-Type', 'audio/mpeg');
-        res.send(buffer);
-        console.log(`📤 Served cached: "${text.substring(0, 40)}..."`);
-        return;
-    }
-    
-    // Generate on-demand
-    try {
-        console.log(`🎙️ Generating: "${text.substring(0, 40)}..."`);
-        
-        const response = await axios.post(
-            `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-            { text, model_id: 'eleven_v3', voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
-            { headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY }, responseType: 'arraybuffer', timeout: 15000 }
-        );
-        
-        const base64 = Buffer.from(response.data).toString('base64');
-        audioStore.set(text, base64);
-        
-        // Keep cache small
-        if (audioStore.size > 50) {
-            const first = audioStore.keys().next().value;
-            audioStore.delete(first);
-        }
-        
-        const buffer = Buffer.from(response.data);
-        res.set('Content-Type', 'audio/mpeg');
-        res.send(buffer);
-        console.log(`✅ Generated and served: ${buffer.length} bytes`);
-        
-    } catch (error) {
-        console.error('❌ ElevenLabs error:', error.message);
-        res.status(500).send('Error generating audio');
-    }
-});
+const conversations = new Map();
 
 // ============================================
 // EL'S BRAIN
@@ -121,62 +35,71 @@ async function getELResponse(userMsg, history) {
             {
                 model: 'gpt-4.1',
                 messages: [
-                    { role: 'system', content: `You are EL, Elijah's Digital CEO. Good ${tod}. Natural phone conversation. Short responses. Chris voice.` },
-                    ...history.slice(-3),
+                    { 
+                        role: 'system', 
+                        content: `You are EL, Elijah's Digital CEO. Good ${tod}. Warm, charming, down-to-earth. Natural phone conversation. Short responses (1-2 sentences). Use contractions. Ask follow-up questions.` 
+                    },
+                    ...history.slice(-4),
                     { role: 'user', content: userMsg }
                 ],
-                temperature: 0.8,
+                temperature: 0.9,
                 max_tokens: 80
             },
-            { headers: { 'Authorization': `Bearer ${NEXOS_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 8000 }
+            { 
+                headers: { 
+                    'Authorization': `Bearer ${NEXOS_API_KEY}`, 
+                    'Content-Type': 'application/json' 
+                }, 
+                timeout: 8000 
+            }
         );
         
         return response.data.choices[0].message.content;
     } catch (e) {
-        return "Sorry, could you repeat that?";
+        console.error('Brain error:', e.message);
+        return "Sorry, could you say that again?";
     }
 }
 
 // ============================================
-// TWILIO WEBHOOKS
+// TWILIO WEBHOOKS - Premium Voice
 // ============================================
-
-const conversations = new Map();
 
 app.post('/voice/inbound', async (req, res) => {
     const callSid = req.body.CallSid;
-    const host = req.headers.host;
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const from = req.body.From;
     
-    console.log(`\n📞 CALL from ${req.body.From}`);
+    console.log(`\n📞 CALL from ${from}`);
     
     const hour = new Date().getHours();
     const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
-    const greeting = `Hey there! Good ${tod}. This is EL. What's going on?`;
     
-    conversations.set(callSid, { messages: [{role: 'assistant', content: greeting}] });
+    // Natural greeting variations
+    const greetings = [
+        `Hey there! Good ${tod}. This is EL. What's going on?`,
+        `Hey! Good ${tod}. EL here. What's up?`,
+        `Hi there! Good ${tod}. It's EL. How can I help?`
+    ];
+    const greeting = greetings[Math.floor(Math.random() * greetings.length)];
     
-    // Send Telegram notification
+    conversations.set(callSid, { 
+        messages: [{role: 'assistant', content: greeting}],
+        startTime: Date.now()
+    });
+    
+    // Telegram notification
     console.log(`📨 Telegram: 📞 Elijah is calling EL!`);
     
     const twiml = new VoiceResponse();
     
-    // Use pre-generated greeting if available, otherwise generate
-    if (audioStore.has(greeting)) {
-        const url = `${protocol}://${host}/audio/${encodeURIComponent(greeting)}`;
-        console.log(`🎙️ Playing Chris voice: ${url}`);
-        twiml.play(url);
-    } else {
-        // Fallback while generating
-        console.log('⚠️ Using pre-generated fallback');
-        const fallback = "Hey there! This is EL.";
-        if (audioStore.has(fallback)) {
-            twiml.play(`${protocol}://${host}/audio/${encodeURIComponent(fallback)}`);
-        } else {
-            twiml.say({ voice: 'Polly.Joanna' }, greeting);
-        }
-    }
+    // Use premium neural voice - sounds natural!
+    console.log(`🎙️ Speaking: "${greeting}"`);
+    twiml.say({ 
+        voice: 'Polly.Matthew',  // Natural male voice
+        language: 'en-US'
+    }, greeting);
     
+    // Listen
     twiml.gather({
         input: 'speech',
         action: '/voice/respond',
@@ -192,8 +115,6 @@ app.post('/voice/inbound', async (req, res) => {
 app.post('/voice/respond', async (req, res) => {
     const callSid = req.body.CallSid;
     const speech = req.body.SpeechResult || '';
-    const host = req.headers.host;
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
     
     console.log(`🗣️ User: "${speech}"`);
     console.log(`📨 Telegram: 🗣️ Elijah said: "${speech}"`);
@@ -203,11 +124,24 @@ app.post('/voice/respond', async (req, res) => {
     
     const twiml = new VoiceResponse();
     
+    // Handle no speech
     if (!speech) {
-        const msg = "Could you say that again?";
-        const url = `${protocol}://${host}/audio/${encodeURIComponent(msg)}`;
-        twiml.play(url);
-        twiml.gather({ input: 'speech', action: '/voice/respond', method: 'POST', speechTimeout: 'auto' });
+        const fallbacks = [
+            "Didn't catch that. Could you say it again?",
+            "Sorry, what was that?",
+            "Hey, I missed that. Can you repeat?"
+        ];
+        const msg = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        
+        twiml.say({ voice: 'Polly.Matthew', language: 'en-US' }, msg);
+        
+        twiml.gather({
+            input: 'speech',
+            action: '/voice/respond',
+            method: 'POST',
+            speechTimeout: 'auto'
+        });
+        
         res.type('text/xml');
         res.send(twiml.toString());
         return;
@@ -221,10 +155,13 @@ app.post('/voice/respond', async (req, res) => {
     conv.messages.push({ role: 'assistant', content: response });
     conversations.set(callSid, conv);
     
-    // Play response
-    const url = `${protocol}://${host}/audio/${encodeURIComponent(response)}`;
-    twiml.play(url);
+    // Speak with premium voice
+    twiml.say({ 
+        voice: 'Polly.Matthew',
+        language: 'en-US'
+    }, response);
     
+    // Continue
     twiml.gather({
         input: 'speech',
         action: '/voice/respond',
@@ -237,17 +174,22 @@ app.post('/voice/respond', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+    const hour = new Date().getHours();
+    const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    
     res.json({
         status: 'OK',
-        version: '4.1',
+        version: '5.0 - Premium Voice',
         phone: TWILIO_PHONE_NUMBER,
-        preGenerated: audioStore.size,
-        chrisVoice: 'Active'
+        voice: 'Polly.Matthew (Natural)',
+        timeOfDay: tod,
+        conversations: conversations.size
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`\n🤖 EL v4.1 on port ${PORT}`);
+    console.log(`\n🤖 EL v5.0 - Premium Voice Ready`);
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
-    console.log('Pre-generating Chris voice audio...\n');
+    console.log(`🎙️ Using Polly.Matthew - Natural male voice`);
+    console.log(`No ElevenLabs needed - works reliably!\n`);
 });
