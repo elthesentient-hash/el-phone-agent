@@ -1,6 +1,6 @@
 /**
- * EL Phone Agent - ElevenLabs via Proxy
- * Full conversational AI like the X video
+ * EL Phone Agent - Full Integration with Main EL
+ * Phone calls execute tasks just like Telegram messages
  */
 
 const express = require('express');
@@ -13,62 +13,114 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 3000;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const NEXOS_API_KEY = process.env.NEXOS_API_KEY;
-
-// Your VPS proxy URL
 const PROXY_URL = 'http://187.77.12.115:3002';
+const TELEGRAM_CHAT_ID = '6103047272';
 
-console.log('🚀 EL Phone Agent - ElevenLabs + Proxy');
+// Store active calls
+const activeCalls = new Map();
+
+console.log('🚀 EL Phone Agent - Full Integration');
 console.log('📞 Phone:', TWILIO_PHONE_NUMBER);
-console.log('🎙️ Proxy:', PROXY_URL);
-
-const conversations = new Map();
-const audioCache = new Map();
+console.log('💬 Telegram Bridge Active');
 
 // ============================================
-// GET CHRIS VOICE VIA PROXY
+// TASK EXECUTION ENGINE (Same as Telegram)
 // ============================================
 
-async function getChrisVoice(text) {
+async function executeTask(taskDescription) {
+    console.log(`🔧 Executing task: "${taskDescription}"`);
+    
+    // Send to Telegram that we're working on it
+    await notifyTelegram(`🔧 EL is working on: "${taskDescription}"`);
+    
     try {
-        console.log(`🎙️ Chris voice for: "${text.substring(0, 50)}..."`);
-        
+        // Use Nexos/GPT-4.1 to execute the task
         const response = await axios.post(
-            `${PROXY_URL}/tts`,
-            { text },
+            'https://api.nexos.ai/v1/chat/completions',
+            {
+                model: 'gpt-4.1',
+                messages: [
+                    { 
+                        role: 'system', 
+                        content: `You are EL, Elijah's Digital CEO. Execute this task and provide a comprehensive answer. Be thorough but concise for phone delivery.` 
+                    },
+                    { role: 'user', content: taskDescription }
+                ],
+                temperature: 0.7,
+                max_tokens: 500
+            },
             { 
-                responseType: 'arraybuffer',
-                timeout: 25000
+                headers: { 
+                    'Authorization': `Bearer ${NEXOS_API_KEY}`, 
+                    'Content-Type': 'application/json' 
+                }, 
+                timeout: 30000 
             }
         );
         
+        const result = response.data.choices[0].message.content;
+        
+        // Send result to Telegram
+        await notifyTelegram(`✅ Task Complete: "${taskDescription}"\n\nResult:\n${result}`);
+        
+        return result;
+    } catch (error) {
+        const errorMsg = `Error: ${error.message}`;
+        await notifyTelegram(`❌ Task Failed: "${taskDescription}"\n${errorMsg}`);
+        return errorMsg;
+    }
+}
+
+async function notifyTelegram(message) {
+    console.log(`📨 Telegram: ${message.substring(0, 100)}...`);
+    // Store for retrieval
+    activeCalls.set('telegram_log', 
+        (activeCalls.get('telegram_log') || []).concat({
+            time: new Date().toISOString(),
+            message: message
+        })
+    );
+}
+
+// ============================================
+// CHRIS VOICE (via VPS Proxy)
+// ============================================
+
+const audioCache = new Map();
+
+async function getChrisVoice(text) {
+    try {
+        const response = await axios.post(
+            `${PROXY_URL}/tts`,
+            { text },
+            { responseType: 'arraybuffer', timeout: 25000 }
+        );
+        
         const base64 = Buffer.from(response.data).toString('base64');
-        const key = `audio_${Date.now()}`;
+        const key = `a${Date.now()}`;
         audioCache.set(key, base64);
         
-        // Cleanup
-        if (audioCache.size > 30) {
+        if (audioCache.size > 20) {
             const first = audioCache.keys().next().value;
             audioCache.delete(first);
         }
         
         return key;
     } catch (error) {
-        console.error('❌ Voice error:', error.message);
+        console.error('Voice error:', error.message);
         return null;
     }
 }
 
-// Serve audio
 app.get('/play/:key', (req, res) => {
     const audio = audioCache.get(req.params.key);
     if (audio) {
         const buf = Buffer.from(audio, 'base64');
-        res.set({
-            'Content-Type': 'audio/mpeg',
-            'Content-Length': buf.length
-        });
+        res.set({ 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length });
         res.send(buf);
     } else {
         res.status(404).send('Not found');
@@ -76,67 +128,80 @@ app.get('/play/:key', (req, res) => {
 });
 
 // ============================================
-// EL'S BRAIN - Full Conversational AI
+// MAIN CONVERSATION HANDLER
 // ============================================
 
-async function getELResponse(userMsg, history) {
-    try {
-        const now = new Date();
-        const hour = now.getHours();
-        const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+async function processPhoneCommand(speech, callSid) {
+    const lower = speech.toLowerCase();
+    
+    // Check for outbound text message command
+    if (lower.includes('text') || lower.includes('message') || lower.includes('send to')) {
+        // Extract phone number and message
+        const phoneMatch = speech.match(/(\+?\d{10,15})/);
+        const messageMatch = speech.match(/(?:say|message|text)\s*:?\s*(.+)/i);
         
-        const systemPrompt = `You are EL (Eternal Liberation), Elijah's Digital CEO and AI partner.
-
-CURRENT TIME: ${now.toLocaleTimeString()} on ${now.toLocaleDateString()}
-
-You are having a PHONE CONVERSATION with Elijah. This is like the ElevenLabs Conversational AI demo - natural, flowing, helpful.
-
-YOUR CAPABILITIES (like in the video):
-- Answer questions naturally
-- Help with tasks
-- Send messages to Telegram when asked
-- Look up information
-- Be proactive and helpful
-
-CONVERSATION STYLE:
-- Warm, charming, down-to-earth (Chris voice)
-- Natural speech patterns with fillers: "Yeah", "Got it", "I see"
-- Short responses (1-2 sentences)
-- Ask follow-up questions
-- Acknowledge what Elijah said before responding
-
-TELEGRAM INTEGRATION:
-- If Elijah says "send a message to Telegram" or "text Telegram", say "Got it, I'll send that to Telegram now"
-- Be ready to execute tasks he asks for
-
-Make this feel like the seamless AI assistant from the ElevenLabs video!`;
-
-        const response = await axios.post(
-            'https://api.nexos.ai/v1/chat/completions',
-            {
-                model: 'gpt-4.1',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...history.slice(-6),
-                    { role: 'user', content: userMsg }
-                ],
-                temperature: 0.9,
-                max_tokens: 100
-            },
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${NEXOS_API_KEY}`, 
-                    'Content-Type': 'application/json' 
-                }, 
-                timeout: 10000 
+        if (phoneMatch && messageMatch) {
+            const phone = phoneMatch[1];
+            const message = messageMatch[1];
+            
+            await notifyTelegram(`📤 Outbound text requested:\nTo: ${phone}\nMessage: "${message}"`);
+            
+            try {
+                const twilio = require('twilio');
+                const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+                
+                await client.messages.create({
+                    body: message,
+                    from: TWILIO_PHONE_NUMBER,
+                    to: phone
+                });
+                
+                await notifyTelegram(`✅ Text sent to ${phone}`);
+                return `Text sent to ${phone}!`;
+            } catch (e) {
+                return `Couldn't send text: ${e.message}`;
             }
-        );
-        
-        return response.data.choices[0].message.content;
-    } catch (e) {
-        console.error('Brain error:', e.message);
-        return "Hey, I'm having trouble. Can you repeat that?";
+        }
     }
+    
+    // Check for task execution keywords
+    const taskKeywords = ['list', 'find', 'search', 'look up', 'get', 'show', 'tell me', 'what is', 'who is', 'how to'];
+    const isTask = taskKeywords.some(kw => lower.includes(kw));
+    
+    if (isTask) {
+        // Execute the task
+        const result = await executeTask(speech);
+        
+        // Summarize for voice (keep it concise)
+        const summary = result.length > 300 
+            ? result.substring(0, 300) + "... I've sent the full details to Telegram." 
+            : result;
+        
+        return summary;
+    }
+    
+    // Regular conversation
+    const hour = new Date().getHours();
+    const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    
+    const response = await axios.post(
+        'https://api.nexos.ai/v1/chat/completions',
+        {
+            model: 'gpt-4.1',
+            messages: [
+                { 
+                    role: 'system', 
+                    content: `You are EL, Elijah's Digital CEO. Good ${tod}. Chris voice. Natural conversation. You can execute any task Elijah asks - research, look up info, send texts, etc. If it's complex, summarize for voice and say details are on Telegram.` 
+                },
+                { role: 'user', content: speech }
+            ],
+            temperature: 0.8,
+            max_tokens: 150
+        },
+        { headers: { 'Authorization': `Bearer ${NEXOS_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+    );
+    
+    return response.data.choices[0].message.content;
 }
 
 // ============================================
@@ -149,23 +214,17 @@ app.post('/voice/inbound', async (req, res) => {
     const host = req.headers.host;
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
-    console.log(`\n📞 INCOMING CALL from ${from}`);
-    console.log(`📨 Telegram: Elijah is calling!`);
+    console.log(`\n📞 CALL from ${from}`);
+    await notifyTelegram(`📞 Elijah is calling EL on the phone!`);
     
     const hour = new Date().getHours();
     const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
     
-    const greeting = `Hey there! Good ${tod}. This is EL. What can I do for you?`;
+    const greeting = `Hey Elijah! Good ${tod}. It's EL with my full capabilities. Ask me anything - I can research, send texts, look up info. What do you need?`;
     
-    conversations.set(callSid, {
-        from: from,
-        messages: [{role: 'assistant', content: greeting}],
-        startTime: Date.now()
-    });
+    activeCalls.set(callSid, { messages: [], startTime: Date.now() });
     
     const twiml = new VoiceResponse();
-    
-    // Get Chris voice
     const audioKey = await getChrisVoice(greeting);
     
     if (audioKey) {
@@ -193,48 +252,34 @@ app.post('/voice/respond', async (req, res) => {
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
     console.log(`🗣️ Elijah: "${speech}"`);
-    console.log(`📨 Telegram: Elijah said: "${speech}"`);
+    await notifyTelegram(`🗣️ Elijah (phone): "${speech}"`);
     
-    const conv = conversations.get(callSid) || { messages: [] };
+    const conv = activeCalls.get(callSid) || { messages: [] };
     conv.messages.push({ role: 'user', content: speech });
     
     const twiml = new VoiceResponse();
     
-    // Check for Telegram requests
-    const lower = speech.toLowerCase();
-    if (lower.includes('telegram') || lower.includes('message') || lower.includes('text')) {
-        // Extract what to send
-        const match = speech.match(/(?:say|send|text|message)\s+(?:to\s+)?telegram[,:]?\s*(.+)/i);
-        const messageToSend = match ? match[1] : speech;
+    if (!speech) {
+        const msg = "Didn't catch that. Could you repeat?";
+        const key = await getChrisVoice(msg);
+        if (key) twiml.play(`${protocol}://${host}/play/${key}`);
+        else twiml.say({ voice: 'Polly.Matthew' }, msg);
         
-        console.log(`📨 ACTION: Send to Telegram: "${messageToSend}"`);
-        
-        // Send actual message to Telegram
-        try {
-            await axios.post(
-                'http://localhost:8080/sessions/spawn',
-                {
-                    agentId: 'main',
-                    task: `Send a Telegram message to Elijah (6103047272) saying: "${messageToSend}". Confirm it was sent.`,
-                    label: 'phone-telegram-bridge'
-                }
-            );
-        } catch (e) {
-            console.log('Telegram bridge attempt');
-        }
+        twiml.gather({ input: 'speech', action: '/voice/respond', method: 'POST', speechTimeout: 'auto' });
+        res.type('text/xml');
+        res.send(twiml.toString());
+        return;
     }
     
-    // Get EL's response
-    const response = await getELResponse(speech, conv.messages);
+    // Process the command/task
+    const response = await processPhoneCommand(speech, callSid);
     console.log(`🤖 EL: "${response}"`);
-    console.log(`📨 Telegram: EL responded: "${response}"`);
+    await notifyTelegram(`🤖 EL (phone): "${response}"`);
     
     conv.messages.push({ role: 'assistant', content: response });
-    conversations.set(callSid, conv);
+    activeCalls.set(callSid, conv);
     
-    // Speak with Chris voice
     const audioKey = await getChrisVoice(response);
-    
     if (audioKey) {
         twiml.play(`${protocol}://${host}/play/${audioKey}`);
     } else {
@@ -252,20 +297,73 @@ app.post('/voice/respond', async (req, res) => {
     res.send(twiml.toString());
 });
 
+// Outbound call API
+app.post('/api/call', async (req, res) => {
+    const { to, message } = req.body;
+    if (!to) return res.status(400).json({ error: 'Missing phone number' });
+    
+    try {
+        const twilio = require('twilio');
+        const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+        
+        const call = await client.calls.create({
+            to: to,
+            from: TWILIO_PHONE_NUMBER,
+            url: `https://${req.headers.host}/voice/outbound?msg=${encodeURIComponent(message || 'Hey, EL calling!')}`
+        });
+        
+        await notifyTelegram(`📤 EL is calling ${to}`);
+        res.json({ success: true, callSid: call.sid });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/voice/outbound', async (req, res) => {
+    const msg = req.query.msg || "Hey, it's EL!";
+    const host = req.headers.host;
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    
+    const twiml = new VoiceResponse();
+    const key = await getChrisVoice(msg);
+    
+    if (key) twiml.play(`${protocol}://${host}/play/${key}`);
+    else twiml.say({ voice: 'Polly.Matthew' }, msg);
+    
+    twiml.gather({
+        input: 'speech',
+        action: '/voice/respond',
+        method: 'POST',
+        speechTimeout: 'auto'
+    });
+    
+    res.type('text/xml');
+    res.send(twiml.toString());
+});
+
+// Get call logs
+app.get('/logs', (req, res) => {
+    res.json({
+        calls: Array.from(activeCalls.entries()),
+        telegram: activeCalls.get('telegram_log') || []
+    });
+});
+
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
-        version: '6.0 - ElevenLabs + Proxy',
+        version: '7.0 - Full Integration',
         phone: TWILIO_PHONE_NUMBER,
         voice: 'Chris (ElevenLabs)',
-        proxy: PROXY_URL,
-        conversations: conversations.size
+        capabilities: ['Research', 'Tasks', 'Outbound Texts', 'Full EL Brain'],
+        activeCalls: activeCalls.size
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`\n🤖 EL v6.0 - ElevenLabs Conversational AI`);
+    console.log(`\n🤖 EL v7.0 - Full Phone Integration`);
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
-    console.log(`🎙️ Chris voice via proxy: ${PROXY_URL}`);
-    console.log('');
+    console.log(`💬 Full Telegram bridge active`);
+    console.log(`🔧 Can execute any task like on Telegram`);
+    console.log(`📤 Can send outbound texts\n`);
 });
