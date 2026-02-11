@@ -179,4 +179,4 @@ app.post('/voice/respond', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ status: 'OK', version: '12.0', phone: PHONE }));
-app.listen(PORT, () => console.log(`EL v12 on ${PORT}`));
+app.listen(PORT, () => console.log(`EL v12 on ${PORT}`));// Redeploy trigger: Wed Feb 11 11:10:26 UTC 2026
