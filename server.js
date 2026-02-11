@@ -18,8 +18,8 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const NEXOS_API_KEY = process.env.NEXOS_API_KEY;
 const PROXY_URL = 'http://187.77.12.115:3002';
 
-// Telegram Bot Token (from your TOOLS.md)
-const TELEGRAM_BOT_TOKEN = '7506631080:AAH0t5vmdaJpzjtSRfXgKrzedLJJ4JlbIUw';
+// Telegram Bot Token
+const TELEGRAM_BOT_TOKEN = '8327299021:AAG8g466B6CZQOTEVxa3Q1w-R147outEQ2s';
 const TELEGRAM_CHAT_ID = '6103047272';
 
 const activeCalls = new Map();
