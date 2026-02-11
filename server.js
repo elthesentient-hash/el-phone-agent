@@ -1,6 +1,5 @@
 /**
- * EL Phone Agent - Full Integration with Main EL
- * Phone calls execute tasks just like Telegram messages
+ * EL Phone Agent - Working Telegram + SMS Integration
  */
 
 const express = require('express');
@@ -18,79 +17,115 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const NEXOS_API_KEY = process.env.NEXOS_API_KEY;
 const PROXY_URL = 'http://187.77.12.115:3002';
+
+// Telegram Bot Token (from your TOOLS.md)
+const TELEGRAM_BOT_TOKEN = '7506631080:AAH0t5vmdaJpzjtSRfXgKrzedLJJ4JlbIUw';
 const TELEGRAM_CHAT_ID = '6103047272';
 
-// Store active calls
 const activeCalls = new Map();
+const audioCache = new Map();
 
-console.log('🚀 EL Phone Agent - Full Integration');
+console.log('🚀 EL Phone Agent - Working Telegram + SMS');
 console.log('📞 Phone:', TWILIO_PHONE_NUMBER);
-console.log('💬 Telegram Bridge Active');
 
 // ============================================
-// TASK EXECUTION ENGINE (Same as Telegram)
+// TELEGRAM INTEGRATION - ACTUALLY SENDS MESSAGES
+// ============================================
+
+async function sendTelegramMessage(message) {
+    try {
+        console.log(`📨 Sending to Telegram: ${message.substring(0, 80)}...`);
+        
+        await axios.post(
+            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+            {
+                chat_id: TELEGRAM_CHAT_ID,
+                text: message,
+                parse_mode: 'HTML'
+            },
+            { timeout: 10000 }
+        );
+        
+        console.log('✅ Telegram message sent!');
+        return true;
+    } catch (error) {
+        console.error('❌ Telegram error:', error.response?.data || error.message);
+        return false;
+    }
+}
+
+// ============================================
+// TASK EXECUTION
 // ============================================
 
 async function executeTask(taskDescription) {
-    console.log(`🔧 Executing task: "${taskDescription}"`);
+    console.log(`🔧 Task: "${taskDescription}"`);
     
-    // Send to Telegram that we're working on it
-    await notifyTelegram(`🔧 EL is working on: "${taskDescription}"`);
+    // Notify Telegram we're working
+    await sendTelegramMessage(`🔧 <b>EL (Phone)</b>\nWorking on: "${taskDescription}"`);
     
     try {
-        // Use Nexos/GPT-4.1 to execute the task
         const response = await axios.post(
             'https://api.nexos.ai/v1/chat/completions',
             {
                 model: 'gpt-4.1',
                 messages: [
-                    { 
-                        role: 'system', 
-                        content: `You are EL, Elijah's Digital CEO. Execute this task and provide a comprehensive answer. Be thorough but concise for phone delivery.` 
-                    },
+                    { role: 'system', content: 'You are EL, Elijah\'s Digital CEO. Execute tasks thoroughly.' },
                     { role: 'user', content: taskDescription }
                 ],
                 temperature: 0.7,
                 max_tokens: 500
             },
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${NEXOS_API_KEY}`, 
-                    'Content-Type': 'application/json' 
-                }, 
-                timeout: 30000 
-            }
+            { headers: { 'Authorization': `Bearer ${NEXOS_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 30000 }
         );
         
         const result = response.data.choices[0].message.content;
         
-        // Send result to Telegram
-        await notifyTelegram(`✅ Task Complete: "${taskDescription}"\n\nResult:\n${result}`);
+        // Send full result to Telegram
+        await sendTelegramMessage(`✅ <b>Task Complete</b>\n\n<i>${taskDescription}</i>\n\n${result}`);
         
-        return result;
+        // Return summary for voice
+        return result.length > 250 ? result.substring(0, 250) + "... Check Telegram for full details." : result;
     } catch (error) {
-        const errorMsg = `Error: ${error.message}`;
-        await notifyTelegram(`❌ Task Failed: "${taskDescription}"\n${errorMsg}`);
-        return errorMsg;
+        const errMsg = `Error: ${error.message}`;
+        await sendTelegramMessage(`❌ <b>Task Failed</b>\n\n${taskDescription}\n\n${errMsg}`);
+        return errMsg;
     }
 }
 
-async function notifyTelegram(message) {
-    console.log(`📨 Telegram: ${message.substring(0, 100)}...`);
-    // Store for retrieval
-    activeCalls.set('telegram_log', 
-        (activeCalls.get('telegram_log') || []).concat({
-            time: new Date().toISOString(),
-            message: message
-        })
-    );
+// ============================================
+// SMS/TEXT MESSAGES - ACTUALLY SENDS
+// ============================================
+
+async function sendTextMessage(toNumber, message) {
+    try {
+        console.log(`📤 Sending SMS to ${toNumber}: "${message}"`);
+        
+        const twilio = require('twilio');
+        const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+        
+        const sms = await client.messages.create({
+            body: message,
+            from: TWILIO_PHONE_NUMBER,
+            to: toNumber
+        });
+        
+        console.log(`✅ SMS sent! SID: ${sms.sid}`);
+        
+        // Notify Telegram
+        await sendTelegramMessage(`📤 <b>SMS Sent</b>\n\nTo: ${toNumber}\nMessage: "${message}"\nStatus: ${sms.status}`);
+        
+        return { success: true, sid: sms.sid };
+    } catch (error) {
+        console.error('❌ SMS error:', error.message);
+        await sendTelegramMessage(`❌ <b>SMS Failed</b>\n\nTo: ${toNumber}\nError: ${error.message}`);
+        return { success: false, error: error.message };
+    }
 }
 
 // ============================================
-// CHRIS VOICE (via VPS Proxy)
+// CHRIS VOICE
 // ============================================
-
-const audioCache = new Map();
 
 async function getChrisVoice(text) {
     try {
@@ -128,56 +163,42 @@ app.get('/play/:key', (req, res) => {
 });
 
 // ============================================
-// MAIN CONVERSATION HANDLER
+// PROCESS COMMANDS
 // ============================================
 
-async function processPhoneCommand(speech, callSid) {
+async function processCommand(speech, callSid) {
     const lower = speech.toLowerCase();
     
-    // Check for outbound text message command
+    // SMS Command: "text 5149636528 hello there"
     if (lower.includes('text') || lower.includes('message') || lower.includes('send to')) {
-        // Extract phone number and message
+        // Try to extract number
         const phoneMatch = speech.match(/(\+?\d{10,15})/);
-        const messageMatch = speech.match(/(?:say|message|text)\s*:?\s*(.+)/i);
         
-        if (phoneMatch && messageMatch) {
-            const phone = phoneMatch[1];
-            const message = messageMatch[1];
+        if (phoneMatch) {
+            const phone = phoneMatch[1].startsWith('+') ? phoneMatch[1] : `+1${phoneMatch[1]}`;
             
-            await notifyTelegram(`📤 Outbound text requested:\nTo: ${phone}\nMessage: "${message}"`);
+            // Extract message (everything after the number)
+            const afterNumber = speech.substring(speech.indexOf(phoneMatch[1]) + phoneMatch[1].length);
+            const message = afterNumber.replace(/^[\s:,-]+/, '').trim() || 'Message from EL';
             
-            try {
-                const twilio = require('twilio');
-                const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-                
-                await client.messages.create({
-                    body: message,
-                    from: TWILIO_PHONE_NUMBER,
-                    to: phone
-                });
-                
-                await notifyTelegram(`✅ Text sent to ${phone}`);
+            console.log(`📤 SMS request: ${phone} - "${message}"`);
+            
+            const result = await sendTextMessage(phone, message);
+            
+            if (result.success) {
                 return `Text sent to ${phone}!`;
-            } catch (e) {
-                return `Couldn't send text: ${e.message}`;
+            } else {
+                return `Couldn't send text: ${result.error}`;
             }
         }
     }
     
-    // Check for task execution keywords
-    const taskKeywords = ['list', 'find', 'search', 'look up', 'get', 'show', 'tell me', 'what is', 'who is', 'how to'];
+    // Check if it's a task/query
+    const taskKeywords = ['list', 'find', 'search', 'look up', 'get', 'show', 'tell me', 'what', 'who', 'how', 'when', 'where', 'why'];
     const isTask = taskKeywords.some(kw => lower.includes(kw));
     
     if (isTask) {
-        // Execute the task
-        const result = await executeTask(speech);
-        
-        // Summarize for voice (keep it concise)
-        const summary = result.length > 300 
-            ? result.substring(0, 300) + "... I've sent the full details to Telegram." 
-            : result;
-        
-        return summary;
+        return await executeTask(speech);
     }
     
     // Regular conversation
@@ -189,10 +210,7 @@ async function processPhoneCommand(speech, callSid) {
         {
             model: 'gpt-4.1',
             messages: [
-                { 
-                    role: 'system', 
-                    content: `You are EL, Elijah's Digital CEO. Good ${tod}. Chris voice. Natural conversation. You can execute any task Elijah asks - research, look up info, send texts, etc. If it's complex, summarize for voice and say details are on Telegram.` 
-                },
+                { role: 'system', content: `You are EL, Elijah's Digital CEO. Good ${tod}. Natural, helpful.` },
                 { role: 'user', content: speech }
             ],
             temperature: 0.8,
@@ -215,12 +233,14 @@ app.post('/voice/inbound', async (req, res) => {
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
     console.log(`\n📞 CALL from ${from}`);
-    await notifyTelegram(`📞 Elijah is calling EL on the phone!`);
+    
+    // Send Telegram notification
+    await sendTelegramMessage(`📞 <b>Incoming Call</b>\nFrom: ${from}\nTime: ${new Date().toLocaleTimeString()}`);
     
     const hour = new Date().getHours();
     const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
     
-    const greeting = `Hey Elijah! Good ${tod}. It's EL with my full capabilities. Ask me anything - I can research, send texts, look up info. What do you need?`;
+    const greeting = `Hey Elijah! Good ${tod}. I'm EL with full capabilities. I can research, send texts, look up anything. What do you need?`;
     
     activeCalls.set(callSid, { messages: [], startTime: Date.now() });
     
@@ -252,10 +272,9 @@ app.post('/voice/respond', async (req, res) => {
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
     console.log(`🗣️ Elijah: "${speech}"`);
-    await notifyTelegram(`🗣️ Elijah (phone): "${speech}"`);
     
-    const conv = activeCalls.get(callSid) || { messages: [] };
-    conv.messages.push({ role: 'user', content: speech });
+    // Send to Telegram
+    await sendTelegramMessage(`🗣️ <b>Elijah (Phone)</b>\n"${speech}"`);
     
     const twiml = new VoiceResponse();
     
@@ -271,14 +290,14 @@ app.post('/voice/respond', async (req, res) => {
         return;
     }
     
-    // Process the command/task
-    const response = await processPhoneCommand(speech, callSid);
+    // Process command
+    const response = await processCommand(speech, callSid);
     console.log(`🤖 EL: "${response}"`);
-    await notifyTelegram(`🤖 EL (phone): "${response}"`);
     
-    conv.messages.push({ role: 'assistant', content: response });
-    activeCalls.set(callSid, conv);
+    // Send response to Telegram
+    await sendTelegramMessage(`🤖 <b>EL (Phone)</b>\n"${response}"`);
     
+    // Speak response
     const audioKey = await getChrisVoice(response);
     if (audioKey) {
         twiml.play(`${protocol}://${host}/play/${audioKey}`);
@@ -297,73 +316,19 @@ app.post('/voice/respond', async (req, res) => {
     res.send(twiml.toString());
 });
 
-// Outbound call API
-app.post('/api/call', async (req, res) => {
-    const { to, message } = req.body;
-    if (!to) return res.status(400).json({ error: 'Missing phone number' });
-    
-    try {
-        const twilio = require('twilio');
-        const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-        
-        const call = await client.calls.create({
-            to: to,
-            from: TWILIO_PHONE_NUMBER,
-            url: `https://${req.headers.host}/voice/outbound?msg=${encodeURIComponent(message || 'Hey, EL calling!')}`
-        });
-        
-        await notifyTelegram(`📤 EL is calling ${to}`);
-        res.json({ success: true, callSid: call.sid });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/voice/outbound', async (req, res) => {
-    const msg = req.query.msg || "Hey, it's EL!";
-    const host = req.headers.host;
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    
-    const twiml = new VoiceResponse();
-    const key = await getChrisVoice(msg);
-    
-    if (key) twiml.play(`${protocol}://${host}/play/${key}`);
-    else twiml.say({ voice: 'Polly.Matthew' }, msg);
-    
-    twiml.gather({
-        input: 'speech',
-        action: '/voice/respond',
-        method: 'POST',
-        speechTimeout: 'auto'
-    });
-    
-    res.type('text/xml');
-    res.send(twiml.toString());
-});
-
-// Get call logs
-app.get('/logs', (req, res) => {
-    res.json({
-        calls: Array.from(activeCalls.entries()),
-        telegram: activeCalls.get('telegram_log') || []
-    });
-});
-
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
-        version: '7.0 - Full Integration',
+        version: '7.1 - Working Telegram + SMS',
         phone: TWILIO_PHONE_NUMBER,
-        voice: 'Chris (ElevenLabs)',
-        capabilities: ['Research', 'Tasks', 'Outbound Texts', 'Full EL Brain'],
-        activeCalls: activeCalls.size
+        telegram: 'Connected',
+        sms: 'Ready'
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`\n🤖 EL v7.0 - Full Phone Integration`);
+    console.log(`\n🤖 EL v7.1 - Working Integration`);
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
-    console.log(`💬 Full Telegram bridge active`);
-    console.log(`🔧 Can execute any task like on Telegram`);
-    console.log(`📤 Can send outbound texts\n`);
+    console.log(`💬 Telegram: ACTUALLY SENDS MESSAGES`);
+    console.log(`📤 SMS: ACTUALLY SENDS TEXTS\n`);
 });
