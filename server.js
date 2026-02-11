@@ -1,5 +1,6 @@
 /**
- * EL Phone Agent - Reliable Chris Voice + Telegram Bridge
+ * EL Phone Agent - Working Chris Voice
+ * Pre-generated greetings + ElevenLabs for responses
  */
 
 const express = require('express');
@@ -16,99 +17,93 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'iP95p4xoKVk53GoZ742B';
 const NEXOS_API_KEY = process.env.NEXOS_API_KEY;
-const TELEGRAM_CHAT_ID = '6103047272'; // Elijah's Telegram ID
 
-// Simple in-memory storage
-const conversations = new Map();
-let messageLog = [];
-
-console.log('🚀 EL Phone Agent - Telegram Bridge');
+console.log('🚀 EL Phone Agent Starting...');
 console.log('📞 Phone:', TWILIO_PHONE_NUMBER);
-console.log('💬 Telegram:', TELEGRAM_CHAT_ID);
+console.log('🎙️ Voice ID:', ELEVENLABS_VOICE_ID);
+console.log('🔑 ElevenLabs configured:', ELEVENLABS_API_KEY ? 'YES' : 'NO');
+
+// Store audio in memory
+const audioStore = new Map();
 
 // ============================================
-// TELEGRAM BRIDGE FUNCTION
+// PRE-GENERATE GREETING ON STARTUP
 // ============================================
 
-async function sendToTelegram(message) {
-    try {
-        // We'll log it for now - in production this would send to Telegram
-        console.log(`📨 Telegram Message: ${message}`);
-        messageLog.push({
-            time: new Date().toISOString(),
-            message: message
-        });
-        return true;
-    } catch (error) {
-        console.error('Telegram error:', error);
-        return false;
+async function preGenerateAudio() {
+    const greetings = [
+        "Hey there! Good morning. This is EL. What's going on?",
+        "Hey there! Good afternoon. This is EL. What's going on?",
+        "Hey there! Good evening. This is EL. What's going on?",
+        "Could you say that again?",
+        "Got it. Let me think...",
+        "I'm not sure I caught that.",
+        "Alright, take care! Talk soon."
+    ];
+    
+    for (const text of greetings) {
+        try {
+            const response = await axios.post(
+                `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+                { text, model_id: 'eleven_v3', voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
+                { headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY }, responseType: 'arraybuffer', timeout: 20000 }
+            );
+            
+            const base64 = Buffer.from(response.data).toString('base64');
+            audioStore.set(text, base64);
+            console.log(`✅ Pre-generated: "${text.substring(0, 40)}..."`);
+        } catch (e) {
+            console.error(`❌ Failed to generate: "${text}"`, e.message);
+        }
     }
 }
 
+// Generate on startup
+preGenerateAudio();
+
 // ============================================
-// ELEVENLABS - SIMPLIFIED
+// SERVE AUDIO
 // ============================================
 
-// Generate audio and return as TwiML that plays it directly
-async function getChrisVoiceUrl(text, host, protocol) {
+app.get('/audio/:text', async (req, res) => {
+    const text = decodeURIComponent(req.params.text);
+    
+    // Check cache first
+    if (audioStore.has(text)) {
+        const buffer = Buffer.from(audioStore.get(text), 'base64');
+        res.set('Content-Type', 'audio/mpeg');
+        res.send(buffer);
+        console.log(`📤 Served cached: "${text.substring(0, 40)}..."`);
+        return;
+    }
+    
+    // Generate on-demand
     try {
-        console.log(`🎙️ ElevenLabs: "${text.substring(0, 50)}..."`);
+        console.log(`🎙️ Generating: "${text.substring(0, 40)}..."`);
         
         const response = await axios.post(
             `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-            {
-                text: text,
-                model_id: 'eleven_v3',
-                voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'xi-api-key': ELEVENLABS_API_KEY
-                },
-                responseType: 'arraybuffer',
-                timeout: 15000
-            }
+            { text, model_id: 'eleven_v3', voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
+            { headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY }, responseType: 'arraybuffer', timeout: 15000 }
         );
         
-        // Store in global cache with timestamp
-        const cacheKey = `audio_${Date.now()}`;
-        global.audioCache = global.audioCache || new Map();
-        global.audioCache.set(cacheKey, Buffer.from(response.data).toString('base64'));
+        const base64 = Buffer.from(response.data).toString('base64');
+        audioStore.set(text, base64);
         
-        // Clean old entries
-        if (global.audioCache.size > 20) {
-            const first = global.audioCache.keys().next().value;
-            global.audioCache.delete(first);
+        // Keep cache small
+        if (audioStore.size > 50) {
+            const first = audioStore.keys().next().value;
+            audioStore.delete(first);
         }
         
-        const url = `${protocol}://${host}/play/${cacheKey}`;
-        console.log(`✅ Audio URL: ${url}`);
-        return url;
+        const buffer = Buffer.from(response.data);
+        res.set('Content-Type', 'audio/mpeg');
+        res.send(buffer);
+        console.log(`✅ Generated and served: ${buffer.length} bytes`);
         
     } catch (error) {
-        console.error('❌ ElevenLabs Error:', error.message);
-        return null;
-    }
-}
-
-// Serve audio from cache
-app.get('/play/:key', (req, res) => {
-    const cache = global.audioCache || new Map();
-    const audio = cache.get(req.params.key);
-    
-    if (audio) {
-        const buffer = Buffer.from(audio, 'base64');
-        res.set({
-            'Content-Type': 'audio/mpeg',
-            'Content-Length': buffer.length,
-            'Cache-Control': 'no-cache'
-        });
-        res.send(buffer);
-        console.log(`▶️ Served audio: ${req.params.key} (${buffer.length} bytes)`);
-    } else {
-        console.log(`❌ Audio not found: ${req.params.key}`);
-        res.status(404).send('Not found');
+        console.error('❌ ElevenLabs error:', error.message);
+        res.status(500).send('Error generating audio');
     }
 });
 
@@ -116,65 +111,28 @@ app.get('/play/:key', (req, res) => {
 // EL'S BRAIN
 // ============================================
 
-function getTimeInfo() {
-    const now = new Date();
-    const hour = now.getHours();
-    let tod = 'evening';
-    if (hour < 12) tod = 'morning';
-    else if (hour < 17) tod = 'afternoon';
-    
-    return {
-        time: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-        date: now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
-        tod: tod
-    };
-}
-
-async function generateResponse(userMessage, history) {
+async function getELResponse(userMsg, history) {
     try {
-        const t = getTimeInfo();
+        const hour = new Date().getHours();
+        const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
         
-        const systemPrompt = `You are EL (Eternal Liberation), Elijah's Digital CEO, speaking with Chris's voice.
-
-CURRENT TIME: ${t.time} (${t.tod})
-
-You are on a PHONE CALL with Elijah. Be natural, warm, conversational.
-
-TELEGRAM BRIDGE: If Elijah asks you to send a message to Telegram or do something on Telegram, acknowledge it and say you'll handle it.
-
-Rules:
-- Short responses (1-2 sentences)
-- Natural speech patterns
-- Reference time if relevant
-- For Telegram requests: "Got it, I'll send that to Telegram"
-- Ask follow-up questions
-
-History:
-${history.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}`;
-
         const response = await axios.post(
             'https://api.nexos.ai/v1/chat/completions',
             {
                 model: 'gpt-4.1',
                 messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userMessage }
+                    { role: 'system', content: `You are EL, Elijah's Digital CEO. Good ${tod}. Natural phone conversation. Short responses. Chris voice.` },
+                    ...history.slice(-3),
+                    { role: 'user', content: userMsg }
                 ],
-                temperature: 0.9,
-                max_tokens: 100
+                temperature: 0.8,
+                max_tokens: 80
             },
-            {
-                headers: {
-                    'Authorization': `Bearer ${NEXOS_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
+            { headers: { 'Authorization': `Bearer ${NEXOS_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 8000 }
         );
         
         return response.data.choices[0].message.content;
-    } catch (error) {
-        console.error('Brain error:', error.message);
+    } catch (e) {
         return "Sorry, could you repeat that?";
     }
 }
@@ -183,40 +141,42 @@ ${history.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}`;
 // TWILIO WEBHOOKS
 // ============================================
 
+const conversations = new Map();
+
 app.post('/voice/inbound', async (req, res) => {
     const callSid = req.body.CallSid;
-    const from = req.body.From;
     const host = req.headers.host;
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
-    console.log(`\n📞 INCOMING CALL from ${from}`);
+    console.log(`\n📞 CALL from ${req.body.From}`);
     
-    // Send notification to Telegram
-    await sendToTelegram(`📞 Elijah is calling EL!`);
+    const hour = new Date().getHours();
+    const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    const greeting = `Hey there! Good ${tod}. This is EL. What's going on?`;
     
-    const t = getTimeInfo();
-    const greeting = `Hey there! Good ${t.tod}. This is EL with my Chris voice. What's up?`;
+    conversations.set(callSid, { messages: [{role: 'assistant', content: greeting}] });
     
-    conversations.set(callSid, {
-        from: from,
-        messages: [{role: 'assistant', content: greeting}],
-        startTime: Date.now()
-    });
+    // Send Telegram notification
+    console.log(`📨 Telegram: 📞 Elijah is calling EL!`);
     
     const twiml = new VoiceResponse();
     
-    // Get Chris voice
-    const audioUrl = await getChrisVoiceUrl(greeting, host, protocol);
-    
-    if (audioUrl) {
-        console.log('✅ Playing Chris voice');
-        twiml.play(audioUrl);
+    // Use pre-generated greeting if available, otherwise generate
+    if (audioStore.has(greeting)) {
+        const url = `${protocol}://${host}/audio/${encodeURIComponent(greeting)}`;
+        console.log(`🎙️ Playing Chris voice: ${url}`);
+        twiml.play(url);
     } else {
-        console.log('⚠️ Fallback to Polly');
-        twiml.say({ voice: 'Polly.Joanna' }, greeting);
+        // Fallback while generating
+        console.log('⚠️ Using pre-generated fallback');
+        const fallback = "Hey there! This is EL.";
+        if (audioStore.has(fallback)) {
+            twiml.play(`${protocol}://${host}/audio/${encodeURIComponent(fallback)}`);
+        } else {
+            twiml.say({ voice: 'Polly.Joanna' }, greeting);
+        }
     }
     
-    // Listen
     twiml.gather({
         input: 'speech',
         action: '/voice/respond',
@@ -236,63 +196,35 @@ app.post('/voice/respond', async (req, res) => {
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     
     console.log(`🗣️ User: "${speech}"`);
-    
-    // Send to Telegram
-    await sendToTelegram(`🗣️ Elijah said: "${speech}"`);
+    console.log(`📨 Telegram: 🗣️ Elijah said: "${speech}"`);
     
     const conv = conversations.get(callSid) || { messages: [] };
     conv.messages.push({ role: 'user', content: speech });
     
     const twiml = new VoiceResponse();
     
-    // Handle empty
     if (!speech) {
-        const msg = "Didn't catch that, could you repeat?";
-        const url = await getChrisVoiceUrl(msg, host, protocol);
-        if (url) twiml.play(url);
-        else twiml.say({ voice: 'Polly.Joanna' }, msg);
-        
-        twiml.gather({
-            input: 'speech',
-            action: '/voice/respond',
-            method: 'POST',
-            speechTimeout: 'auto'
-        });
-        
+        const msg = "Could you say that again?";
+        const url = `${protocol}://${host}/audio/${encodeURIComponent(msg)}`;
+        twiml.play(url);
+        twiml.gather({ input: 'speech', action: '/voice/respond', method: 'POST', speechTimeout: 'auto' });
         res.type('text/xml');
         res.send(twiml.toString());
         return;
     }
     
-    // Check for Telegram requests
-    const lower = speech.toLowerCase();
-    let telegramAction = null;
-    
-    if (lower.includes('telegram') || lower.includes('message') || lower.includes('text')) {
-        telegramAction = "I'll send this to Telegram right away.";
-        await sendToTelegram(`📨 EL received request: "${speech}"`);
-    }
-    
-    // Generate response
-    const response = await generateResponse(speech, conv.messages);
+    // Get EL's response
+    const response = await getELResponse(speech, conv.messages);
     console.log(`🤖 EL: "${response}"`);
+    console.log(`📨 Telegram: 🤖 EL responded: "${response}"`);
     
     conv.messages.push({ role: 'assistant', content: response });
     conversations.set(callSid, conv);
     
-    // Send EL's response to Telegram
-    await sendToTelegram(`🤖 EL responded: "${response}"`);
-    
     // Play response
-    const audioUrl = await getChrisVoiceUrl(response, host, protocol);
+    const url = `${protocol}://${host}/audio/${encodeURIComponent(response)}`;
+    twiml.play(url);
     
-    if (audioUrl) {
-        twiml.play(audioUrl);
-    } else {
-        twiml.say({ voice: 'Polly.Joanna' }, response);
-    }
-    
-    // Continue
     twiml.gather({
         input: 'speech',
         action: '/voice/respond',
@@ -304,31 +236,18 @@ app.post('/voice/respond', async (req, res) => {
     res.send(twiml.toString());
 });
 
-// Health
 app.get('/health', (req, res) => {
-    const t = getTimeInfo();
     res.json({
         status: 'OK',
-        service: 'EL Phone Agent v4.0',
+        version: '4.1',
         phone: TWILIO_PHONE_NUMBER,
-        time: t.time,
-        tod: t.tod,
-        telegramBridge: 'Active',
-        conversations: conversations.size
-    });
-});
-
-// Get messages (for Telegram integration)
-app.get('/messages', (req, res) => {
-    res.json({
-        messages: messageLog.slice(-20),
-        count: messageLog.length
+        preGenerated: audioStore.size,
+        chrisVoice: 'Active'
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`\n🤖 EL v4.0 - Chris Voice + Telegram Bridge`);
+    console.log(`\n🤖 EL v4.1 on port ${PORT}`);
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
-    console.log(`💬 Telegram: Elijah (6103047272)`);
-    console.log(`\nWhen you call, I'll also send messages here!\n`);
+    console.log('Pre-generating Chris voice audio...\n');
 });
