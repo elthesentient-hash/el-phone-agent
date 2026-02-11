@@ -351,4 +351,4 @@ app.listen(PORT, () => {
     console.log(`📞 ${TWILIO_PHONE_NUMBER}`);
     console.log(`💬 Telegram: ACTUALLY SENDS MESSAGES`);
     console.log(`📤 SMS: ACTUALLY SENDS TEXTS\n`);
-});
+});// Redeploy trigger: Wed Feb 11 10:02:28 UTC 2026
