@@ -1,0 +1,31 @@
+{
+  "name": "el-phone-agent",
+  "description": "EL AI Phone Agent with Chris Voice",
+  "repository": "https://github.com/YOUR_USERNAME/el-phone-agent",
+  "env": {
+    "TWILIO_ACCOUNT_SID": {
+      "description": "Twilio Account SID",
+      "required": true
+    },
+    "TWILIO_AUTH_TOKEN": {
+      "description": "Twilio Auth Token",
+      "required": true
+    },
+    "TWILIO_PHONE_NUMBER": {
+      "description": "Twilio Phone Number",
+      "required": true
+    },
+    "ELEVENLABS_API_KEY": {
+      "description": "ElevenLabs API Key",
+      "required": true
+    },
+    "ELEVENLABS_VOICE_ID": {
+      "description": "ElevenLabs Voice ID (Chris)",
+      "value": "iP95p4xoKVk53GoZ742B"
+    },
+    "NEXOS_API_KEY": {
+      "description": "Nexos API Key",
+      "required": true
+    }
+  }
+}

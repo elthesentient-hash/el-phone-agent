@@ -1,0 +1,19 @@
+{
+  "name": "el-phone-agent-railway",
+  "version": "1.1.0",
+  "description": "EL AI Phone Agent - Railway Production",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "twilio": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

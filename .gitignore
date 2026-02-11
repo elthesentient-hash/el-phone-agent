@@ -1,0 +1,16 @@
+# Ignore local files
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Audio files (generated)
+public/*.mp3
+
+# OS files
+.DS_Store
+Thumbs.db
